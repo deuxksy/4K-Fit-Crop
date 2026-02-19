@@ -11,7 +11,7 @@
 - **초고속 병렬 처리**: 멀티 코어 CPU를 활용한 병렬 처리로 대량의 이미지를 빠르게 최적화합니다.
 - **유연한 설정**: 해상도, 포맷, 입출력 경로를 명령어로 자유롭게 설정할 수 있습니다.
 - **가로형 이미지**: 16:9 비율로 중앙 크롭 (Center Crop)
-- **세로형 이미지**: 좌우 1px을 늘려 배경을 만들고 원본을 중앙에 배치 (1px Stretch + Blur)
+- **세로형 이미지**: 너비를 3840으로 리사이즈 후 지정된 위치(기본 10%)에서 크롭 (Top % Crop)
 - **파일명 정리**: `14000`, `10000`, `px` 등 불필요한 문자열 제거
 - **자동 감지**: 시스템에 설치된 ImageMagick 버전(`magick` 또는 `convert`)을 자동으로 감지하여 실행
 
@@ -56,13 +56,20 @@ winget install ImageMagick.ImageMagick
 
 ### 3. 스크립트 실행 준비
 
-이 스크립트는 **Python 표준 라이브러리**를 기반으로 하지만, 향상된 사용자 경험(진행 상태 표시)을 위해 **`tqdm`** 라이브러리를 사용합니다. 
+이 스크립트는 **Python 표준 라이브러리**를 기반으로 하지만, 향상된 사용자 경험(진행 상태 표시)을 위해 **`tqdm`** 라이브러리를 사용합니다.
 
-- **자동 설치**: 스크립트 실행 시 `tqdm`이 없으면 자동으로 설치를 시도합니다.
-- **수동 설치 (권장)**:
-  ```bash
-  pip install -r requirements.txt
-  ```
+**uv 사용 (권장)**:
+```bash
+# uv 설치 후
+uv sync
+```
+
+**pip 사용**:
+```bash
+# 자동 설치: 스크립트 실행 시 tqdm이 없으면 자동으로 설치
+# 수동 설치
+pip install -r requirements.txt
+```
 
 ImageMagick와 `tqdm`이 준비되었다면 바로 실행 가능합니다.
 
@@ -106,6 +113,12 @@ python3 optimize_4k.py --input MyPhotos --output Wallpapers
 # 사용자 지정 해상도 설정 (예: QHD)
 python3 optimize_4k.py --width 2560 --height 1440
 
+# 세로 이미지 크롭 위치 변경 (최상단부터)
+python3 optimize_4k.py --v-pos 0
+
+# 세로 이미지 중앙 크롭
+python3 optimize_4k.py --v-pos 50
+
 # 모든 옵션 조합 예시
 python3 optimize_4k.py --input raw_imgs --output processed --width 1920 --height 1080 --format png
 ```
@@ -119,6 +132,7 @@ python3 optimize_4k.py --input raw_imgs --output processed --width 1920 --height
 | `--height` | `2160` | 목표 세로 해상도 (px) |
 | `--format` | `jpg` | 출력 파일 포맷 (`jpg`, `png`, `webp`) |
 | `--workers` | `4` | 병렬 처리에 사용할 프로세스 수 |
+| `--v-pos` | `10` | 세로 이미지 크롭 시작 위치 % (0-100) |
 
 
 ## 라이선스 (License)

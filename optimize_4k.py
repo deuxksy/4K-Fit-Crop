@@ -28,10 +28,10 @@ def get_imagemagick_cmds():
     sys.exit(1)
 
 
-def process_image(root, filename, source_dir, output_dir, target_w, target_h, im_cmd, ident_cmd, ext):
+def process_image(root, filename, source_dir, output_dir, target_w, target_h, im_cmd, ident_cmd, ext, v_pos, ratio):
     """
-    Process a single image: horizontal images are center-cropped, 
-    vertical images get a blurred 1px-stretched background.
+    Process a single image: horizontal images are center-cropped,
+    vertical images are resized and cropped from top position.
     """
     valid_exts = ('.jpg', '.jpeg', '.png', '.webp')
     if not filename.lower().endswith(valid_exts):
@@ -41,7 +41,7 @@ def process_image(root, filename, source_dir, output_dir, target_w, target_h, im
     
     # Clean up filename (remove common bulk tags)
     base_name = os.path.splitext(filename)[0]
-    clean_name = re.sub(r'(-?14000|-?10000|-?px)', '', base_name)
+    clean_name = re.sub(r'(-?14000|-?10000|-?\d+px|-4K)', '', base_name)
     
     # Generate prefix based on directory structure (Name-Album-File)
     # Apply prefix ONLY if the original base_name consists only of digits
@@ -63,7 +63,9 @@ def process_image(root, filename, source_dir, output_dir, target_w, target_h, im
                 prefix = rel_path.replace(os.path.sep, '-')
                 clean_name = f"{prefix}-{clean_name}"
     
-    output_path = os.path.join(output_dir, f"{clean_name}-4K.{ext}")
+    # 비율 라벨 변환 (16:9 → 16x9)
+    ratio_label = ratio.replace(":", "x")
+    output_path = os.path.join(output_dir, f"{clean_name}-{ratio_label}-{target_w}-v{int(v_pos)}.{ext}")
 
     try:
         # Get image dimensions
@@ -71,25 +73,29 @@ def process_image(root, filename, source_dir, output_dir, target_w, target_h, im
         w, h = map(int, identify_res.decode().split())
 
         if w < h:
-            # Vertical image: create blurred background from edges
+            # Vertical image: 항상 width를 target_w로 리사이즈 후 crop
+            # 1. width를 target_w로 리사이즈 (비율 유지)
+            new_h = int(h * target_w / w)
+
+            # 2. crop 시작 위치 계산 (상단 기준)
+            crop_y = int(new_h * (v_pos / 100))
+
+            # 3. 리사이즈 후 crop
             cmd = [
                 im_cmd, input_path,
-                '(', '-clone', '0', '-resize', 'x216',
-                '(', '-clone', '0', '-gravity', 'West', '-crop', '1x0+0+0', '-resize', '1920x216!', ')',
-                '(', '-clone', '0', '-gravity', 'East', '-crop', '1x0+0+0', '-resize', '1920x216!', ')',
-                '-delete', '0', '-background', 'none', '+append', '-blur', '0x20', '-resize', f'{target_w}x{target_h}!', ')',
-                '(', '-clone', '0', '-resize', f'x{target_h}', ')',
-                '-delete', '0', '-gravity', 'center', '-compose', 'over', '-composite', '+repage',
+                '-resize', f'{target_w}x',  # width를 target_w로 리사이즈
+                '-crop', f'{target_w}x{target_h}+0+{crop_y}',
+                '+repage',
                 output_path
             ]
-            method = "1px Stretch"
+            method = f"Width {target_w} Resize + Top {v_pos}% Crop"
         else:
             # Horizontal image: center crop
             cmd = [
-                im_cmd, input_path, 
-                '-resize', f'{target_w}x{target_h}^', 
-                '-gravity', 'center', 
-                '-extent', f'{target_w}x{target_h}', 
+                im_cmd, input_path,
+                '-resize', f'{target_w}x{target_h}^',
+                '-gravity', 'center',
+                '-extent', f'{target_w}x{target_h}',
                 output_path
             ]
             method = "Center Crop"
@@ -105,12 +111,20 @@ def main():
     parser = argparse.ArgumentParser(description="Parallel 4K Image Optimizer using ImageMagick")
     parser.add_argument("--input", default="Models", help="Input directory (default: Models)")
     parser.add_argument("--output", default="output", help="Output directory (default: output)")
-    parser.add_argument("--width", type=int, default=3840, help="Target width (default: 3840)")
-    parser.add_argument("--height", type=int, default=2160, help="Target height (default: 2160)")
+    parser.add_argument("--width", type=int, default=3840,
+                       help="Target width (default: 3840). Height is auto-calculated based on ratio")
+    parser.add_argument("--ratio", default="16:9", choices=["16:9", "3:2", "4:3", "21:9"],
+                       help="Aspect ratio (default: 16:9)")
     parser.add_argument("--format", default="jpg", choices=["jpg", "png", "webp"], help="Format (default: jpg)")
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
-    
+    parser.add_argument("--v-pos", type=float, default=10.0,
+                       help="Vertical crop position percentage (0-100, default: 10)")
+
     args = parser.parse_args()
+
+    # 비율에 따라 height 자동 계산
+    ratio_map = {"16:9": 9/16, "3:2": 2/3, "4:3": 3/4, "21:9": 9/21}
+    args.height = int(args.width * ratio_map[args.ratio])
 
     try:
         from tqdm import tqdm
@@ -120,7 +134,7 @@ def main():
         from tqdm import tqdm
 
     im_cmd, ident_cmd = get_imagemagick_cmds()
-    print(f"🚀 Initializing optimization: {args.width}x{args.height} [{args.format}]")
+    print(f"🚀 Initializing optimization: {args.width}x{args.height} ({args.ratio}) [{args.format}]")
     
     if not os.path.exists(args.output):
         os.makedirs(args.output)
@@ -141,8 +155,8 @@ def main():
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         futures = {
             executor.submit(
-                process_image, r, f, args.input, args.output, 
-                args.width, args.height, im_cmd, ident_cmd, args.format
+                process_image, r, f, args.input, args.output,
+                args.width, args.height, im_cmd, ident_cmd, args.format, args.v_pos, args.ratio
             ): f for r, f in image_tasks
         }
         
